@@ -687,6 +687,19 @@ body{
       <div class="panel-title">👥 Comptes utilisateurs</div>
       <div class="users-list" id="users-list"></div>
     </div>
+
+    <!-- Accès Gratuit Guests -->
+    <div class="panel">
+      <div class="panel-title">⚡ Accès Gratuit — Appareils invités</div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.6;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;">
+        Chaque appareil qui clique sur <strong style="color:var(--green)">Accès Gratuit</strong> est enregistré ici. L'admin peut renouveler, étendre ou bloquer l'accès.
+      </div>
+      <div class="users-list" id="guests-list"><div class="empty">Aucun appareil invité enregistré</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px;">
+        <button class="btn-ghost" style="padding:10px;font-size:12px;text-align:center;" onclick="clearExpiredGuests()">🗑 Suppr. expirés</button>
+        <button class="btn-ghost green" style="padding:10px;font-size:12px;text-align:center;" onclick="refreshGuests()">↻ Actualiser</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1097,25 +1110,53 @@ function showPage(id) {
 }
 
 // ══════════════════════════════════════
-// TRIAL 12H — ACCÈS GRATUIT
+// TRIAL 12H — ACCÈS GRATUIT + TRACKING
 // ══════════════════════════════════════
-const TRIAL_DURATION = 12 * 60 * 60 * 1000; // 12h en ms
+const TRIAL_DURATION = 12 * 60 * 60 * 1000;
+const GUESTS_KEY = 'bet261_guests_v2';
+
+function getGuests() { try { return JSON.parse(localStorage.getItem(GUESTS_KEY)||'[]'); } catch { return []; } }
+function saveGuests(g) { localStorage.setItem(GUESTS_KEY, JSON.stringify(g)); }
+
+function getMyGuestRecord() {
+  const dev = getDeviceId();
+  return getGuests().find(g => g.deviceId === dev) || null;
+}
 
 function initTrial() {
-  if (!localStorage.getItem('bet261_trial_start')) {
-    localStorage.setItem('bet261_trial_start', Date.now().toString());
+  const dev = getDeviceId();
+  const guests = getGuests();
+  let rec = guests.find(g => g.deviceId === dev);
+  if (!rec) {
+    // Nouvel appareil — on enregistre avec un label auto
+    const label = 'Invité-' + Math.random().toString(36).slice(2,6).toUpperCase();
+    rec = {
+      deviceId: dev,
+      label: label,
+      firstSeen: Date.now(),
+      expireAt: Date.now() + TRIAL_DURATION,
+      blocked: false,
+      permanent: false,
+      renewCount: 0
+    };
+    guests.push(rec);
+    saveGuests(guests);
   }
 }
 
 function isTrialExpired() {
-  const start = parseInt(localStorage.getItem('bet261_trial_start') || '0');
-  if (!start) return false;
-  return (Date.now() - start) >= TRIAL_DURATION;
+  const rec = getMyGuestRecord();
+  if (!rec) return true;
+  if (rec.blocked) return true;
+  if (rec.permanent) return false;
+  return Date.now() >= rec.expireAt;
 }
 
 function getTrialRemaining() {
-  const start = parseInt(localStorage.getItem('bet261_trial_start') || '0');
-  const remaining = Math.max(0, TRIAL_DURATION - (Date.now() - start));
+  const rec = getMyGuestRecord();
+  if (!rec || rec.blocked) return { remaining:0, h:0, m:0, s:0 };
+  if (rec.permanent) return { remaining:Infinity, h:99, m:0, s:0 };
+  const remaining = Math.max(0, rec.expireAt - Date.now());
   return {
     remaining,
     h: Math.floor(remaining / 3600000),
@@ -1126,20 +1167,21 @@ function getTrialRemaining() {
 
 // Countdown mis à jour chaque seconde
 setInterval(function() {
-  const {h,m,s} = getTrialRemaining();
-  const fmt = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  const {h,m,s,remaining} = getTrialRemaining();
+  const rec = getMyGuestRecord();
+  const isPerm = rec && rec.permanent;
+  const fmt = isPerm ? '∞' : String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
   const hmsEl = document.getElementById('trial-hms');
   const sbEl  = document.getElementById('sb-trial-hms');
   const btnT  = document.getElementById('btn-gratuit-time');
   if (hmsEl) hmsEl.textContent = fmt;
   if (sbEl)  sbEl.textContent  = fmt;
   if (btnT)  btnT.textContent  = fmt;
-  // Rouge si moins d'1h
-  const red = h < 1;
+  const red = !isPerm && h < 1;
   if (hmsEl) hmsEl.style.color = red ? '#ef4444' : '#22c55e';
   if (sbEl)  sbEl.style.color  = red ? '#ef4444' : '#22c55e';
-  // Si expiré en cours de session
-  if (isTrialExpired() && currentUser && currentUser.role === 'guest') {
+  // Expiration en cours de session
+  if (!isPerm && isTrialExpired() && currentUser && currentUser.role === 'guest') {
     currentUser = null;
     showPage('page-login');
     const errEl = document.getElementById('login-err');
@@ -1152,12 +1194,12 @@ setInterval(function() {
   }
 }, 1000);
 
-// Init au chargement
 window.addEventListener('load', function() {
   initTrial();
-  // Mettre à jour l'affichage initial
   const {h,m,s} = getTrialRemaining();
-  const fmt = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  const rec = getMyGuestRecord();
+  const isPerm = rec && rec.permanent;
+  const fmt = isPerm ? '∞' : String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
   const hmsEl = document.getElementById('trial-hms');
   const btnT  = document.getElementById('btn-gratuit-time');
   if (hmsEl) hmsEl.textContent = fmt;
@@ -1167,6 +1209,130 @@ window.addEventListener('load', function() {
     if (btnG) { btnG.style.borderColor='rgba(239,68,68,0.4)'; btnG.style.color='#ef4444'; btnG.innerHTML='🔒 Accès gratuit expiré'; btnG.disabled=true; }
   }
 });
+
+// ══════════════════════════════════════
+// ADMIN — GESTION DES GUESTS
+// ══════════════════════════════════════
+function renderGuests() {
+  const guests = getGuests();
+  const list = document.getElementById('guests-list');
+  if (!list) return;
+  if (!guests.length) { list.innerHTML='<div class="empty">Aucun appareil invité enregistré</div>'; return; }
+
+  const now = Date.now();
+  list.innerHTML = guests.map((g,i) => {
+    const expired  = !g.permanent && now >= g.expireAt;
+    const blocked  = g.blocked;
+    const isPerm   = g.permanent;
+    const remMs    = Math.max(0, g.expireAt - now);
+    const remH     = Math.floor(remMs/3600000);
+    const remM     = Math.floor((remMs%3600000)/60000);
+    const statusTxt = blocked ? '🔒 Bloqué' : expired ? '⛔ Expiré' : isPerm ? '♾️ Permanent' : `⏱ ${remH}h${remM}m restantes`;
+    const statusColor = blocked ? '#ef4444' : expired ? '#f97316' : isPerm ? '#60a5fa' : '#22c55e';
+    const firstDate = new Date(g.firstSeen).toLocaleDateString('fr');
+    const firstTime = new Date(g.firstSeen).toLocaleTimeString('fr',{hour:'2-digit',minute:'2-digit'});
+    const shortDev  = g.deviceId.slice(-8);
+    return `
+    <div class="user-item${blocked?' blocked-item':expired?' blocked-item':''}">
+      <div class="u-avatar${blocked||expired?' blk':''}">📱</div>
+      <div class="u-info">
+        <div class="u-name">${g.label} <span style="font-size:10px;color:var(--muted);font-weight:400;">#${shortDev}</span></div>
+        <div class="u-meta" style="color:${statusColor};font-weight:600;">${statusTxt}</div>
+        <div class="u-meta">1ère connexion : ${firstDate} à ${firstTime} · Renouvellements : ${g.renewCount}</div>
+      </div>
+      <div class="u-actions" style="flex-wrap:wrap;gap:4px;justify-content:flex-end;">
+        ${!blocked ? `
+          <button class="u-btn" style="font-size:10px;width:auto;padding:0 8px;border-radius:6px;height:28px;" onclick="extendGuest(${i},12)" title="+12h">+12h</button>
+          <button class="u-btn" style="font-size:10px;width:auto;padding:0 8px;border-radius:6px;height:28px;" onclick="extendGuest(${i},24)" title="+24h">+24h</button>
+          <button class="u-btn u-unblock" style="font-size:10px;width:auto;padding:0 8px;border-radius:6px;height:28px;" onclick="makeGuestPermanent(${i})" title="Permanent">♾️</button>
+          <button class="u-btn u-block" onclick="blockGuest(${i})" title="Bloquer">🔒</button>
+        ` : `
+          <button class="u-btn u-unblock" onclick="unblockGuest(${i})" title="Débloquer">🔓</button>
+        `}
+        <button class="u-btn u-del" onclick="deleteGuest(${i})" title="Supprimer">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function extendGuest(i, hours) {
+  const guests = getGuests();
+  const g = guests[i];
+  if (!g) return;
+  g.blocked = false;
+  g.permanent = false;
+  // Si expiré, repart de maintenant; sinon ajoute au temps restant
+  const base = Math.max(Date.now(), g.expireAt);
+  g.expireAt = base + hours * 3600000;
+  g.renewCount = (g.renewCount||0) + 1;
+  saveGuests(guests);
+  renderGuests();
+  showToastAdmin(`✅ ${g.label} : +${hours}h accordées`);
+}
+
+function makeGuestPermanent(i) {
+  const guests = getGuests();
+  guests[i].permanent = true;
+  guests[i].blocked = false;
+  guests[i].renewCount = (guests[i].renewCount||0) + 1;
+  saveGuests(guests);
+  renderGuests();
+  showToastAdmin(`♾️ ${guests[i].label} : accès permanent accordé`);
+}
+
+function blockGuest(i) {
+  const guests = getGuests();
+  guests[i].blocked = true;
+  guests[i].permanent = false;
+  saveGuests(guests);
+  renderGuests();
+  showToastAdmin(`🔒 ${guests[i].label} bloqué`);
+}
+
+function unblockGuest(i) {
+  const guests = getGuests();
+  guests[i].blocked = false;
+  // Renouvelle 12h depuis maintenant
+  guests[i].expireAt = Date.now() + 12 * 3600000;
+  guests[i].renewCount = (guests[i].renewCount||0) + 1;
+  saveGuests(guests);
+  renderGuests();
+  showToastAdmin(`🔓 ${guests[i].label} débloqué (+12h)`);
+}
+
+function deleteGuest(i) {
+  const guests = getGuests();
+  const name = guests[i].label;
+  guests.splice(i,1);
+  saveGuests(guests);
+  renderGuests();
+  showToastAdmin(`🗑 ${name} supprimé`);
+}
+
+function clearExpiredGuests() {
+  const now = Date.now();
+  const filtered = getGuests().filter(g => g.permanent || g.blocked || now < g.expireAt);
+  saveGuests(filtered);
+  renderGuests();
+  showToastAdmin('🗑 Invités expirés supprimés');
+}
+
+function refreshGuests() { renderGuests(); showToastAdmin('↻ Liste actualisée'); }
+
+function showToastAdmin(msg) {
+  // Réutilise ou crée un toast temporaire
+  let t = document.getElementById('toast-admin');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast-admin';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 18px;font-size:13px;font-weight:600;color:var(--text);box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:1000;transition:transform .3s cubic-bezier(.2,.8,.3,1),opacity .3s;opacity:0;white-space:nowrap;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.transform = 'translateX(-50%) translateY(0)';
+  t.style.opacity = '1';
+  setTimeout(() => { t.style.transform='translateX(-50%) translateY(80px)'; t.style.opacity='0'; }, 2500);
+}
 function showAppPanel() {
   const name = currentUser.username;
   document.getElementById('sb-name').textContent = name;
@@ -1178,7 +1344,7 @@ function showAppPanel() {
   const trialBar=document.getElementById('sb-trial');
   if(trialBar) trialBar.style.display=currentUser.role==='admin'?'none':'inline-flex';
 }
-function showAdminPanel() { renderUsers(); showPage('page-admin'); }
+function showAdminPanel() { renderUsers(); renderGuests(); showPage('page-admin'); }
 function goToApp() { if (currentUser) showAppPanel(); }
 function goBack() { showPage('page-form'); }
 
@@ -1186,13 +1352,20 @@ function goBack() { showPage('page-form'); }
 // ADMIN — CREDENTIALS
 // ══════════════════════════════════════════════════════════
 function adminResetTrial() {
-  localStorage.removeItem('bet261_trial_start');
-  initTrial();
+  const dev = getDeviceId();
+  const guests = getGuests();
+  const idx = guests.findIndex(g => g.deviceId === dev);
+  if (idx>=0) {
+    guests[idx].expireAt = Date.now() + TRIAL_DURATION;
+    guests[idx].blocked = false;
+    guests[idx].permanent = false;
+    guests[idx].renewCount = (guests[idx].renewCount||0)+1;
+    saveGuests(guests);
+  } else { initTrial(); }
   updateTrialStatusAdmin();
+  renderGuests();
   const msg = document.getElementById('trial-reset-msg');
-  msg.textContent = '✅ Essai réinitialisé — 12h repart de zéro';
-  msg.className = 'a-msg ok';
-  setTimeout(() => { msg.className = 'a-msg'; }, 4000);
+  if (msg) { msg.textContent = '✅ Essai réinitialisé — 12h repart de zéro'; msg.className = 'a-msg ok'; setTimeout(() => { msg.className = 'a-msg'; }, 4000); }
 }
 
 function updateTrialStatusAdmin() {
@@ -1201,6 +1374,8 @@ function updateTrialStatusAdmin() {
   if (isTrialExpired()) {
     el.innerHTML = '<span style="color:#ef4444;">⛔ Essai expiré</span>';
   } else {
+    const rec = getMyGuestRecord();
+    if (rec && rec.permanent) { el.innerHTML = '<span style="color:#60a5fa;">♾️ Accès permanent</span>'; return; }
     const {h,m} = getTrialRemaining();
     el.innerHTML = `<span style="color:#22c55e;">✅ Actif</span> — <strong style="color:#fff;">${h}h ${m}m</strong> restantes`;
   }
