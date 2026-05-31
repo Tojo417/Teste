@@ -1036,6 +1036,17 @@ function getUsers() { try { return JSON.parse(localStorage.getItem('bet261_users
 function saveUsers(u) { localStorage.setItem('bet261_users', JSON.stringify(u)); }
 
 let currentUser = null;
+const SESSION_KEY = 'bet261_session_v3';
+
+function saveSession(user) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+}
+function loadSession() {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { return null; }
+}
+function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+}
 
 // ══════════════════════════════════════════════════════════
 // LOGIN / LOGOUT
@@ -1053,6 +1064,7 @@ function doLogin() {
   const adminAcc = getAdminAccount();
   if (uname === adminAcc.username && ph === adminAcc.passHash) {
     currentUser = { username: adminAcc.username, role: 'admin' };
+    saveSession(currentUser);
     showAppPanel(); return;
   }
 
@@ -1071,6 +1083,7 @@ function doLogin() {
   if (!user.deviceId) { user.deviceId = dev; saveUsers(users); }
 
   currentUser = { username: user.username, role: 'user' };
+  saveSession(currentUser);
   showAppPanel();
 }
 
@@ -1094,6 +1107,7 @@ document.getElementById('login-user').addEventListener('keydown', e => { if (e.k
 
 function doLogout() {
   currentUser = null;
+  clearSession();
   document.getElementById('login-user').value = '';
   document.getElementById('login-pass').value = '';
   document.getElementById('login-err').classList.remove('show');
@@ -1196,6 +1210,47 @@ setInterval(function() {
 
 window.addEventListener('load', function() {
   initTrial();
+
+  // ── Restaurer session persistante ──
+  const savedSess = loadSession();
+  if (savedSess) {
+    if (savedSess.role === 'admin') {
+      // Vérifier que le compte admin existe encore
+      const acc = getAdminAccount();
+      if (acc.username === savedSess.username) {
+        currentUser = savedSess;
+        renderUsers(); renderGuests();
+        showAppPanel();
+        goto: null; // label trick — skip login display below
+      }
+    } else if (savedSess.role === 'user') {
+      const users = getUsers();
+      const u = users.find(x => x.username === savedSess.username);
+      if (u && !u.blocked) {
+        currentUser = savedSess;
+        showAppPanel();
+      } else {
+        clearSession(); // compte supprimé ou bloqué
+      }
+    } else if (savedSess.role === 'guest') {
+      if (!isTrialExpired()) {
+        currentUser = savedSess;
+        const sbName   = document.getElementById('sb-name');
+        const sbAvatar = document.getElementById('sb-avatar');
+        const sbRole   = document.getElementById('sb-role');
+        const trialBar = document.getElementById('sb-trial');
+        const adminBtn = document.getElementById('sb-admin-btn');
+        if (sbName)   sbName.textContent   = 'Invité';
+        if (sbAvatar) sbAvatar.textContent = '⚡';
+        if (sbRole)   sbRole.textContent   = 'Accès gratuit · Bet261';
+        if (trialBar) trialBar.style.display = 'inline-flex';
+        if (adminBtn) adminBtn.style.display = 'none';
+        showPage('page-form');
+      } else {
+        clearSession(); // trial expiré
+      }
+    }
+  }
   const {h,m,s} = getTrialRemaining();
   const rec = getMyGuestRecord();
   const isPerm = rec && rec.permanent;
@@ -1722,6 +1777,7 @@ function accesGratuit() {
 
   // Accès direct — invité
   currentUser = { username: 'Invité', role: 'guest' };
+  saveSession(currentUser);
 
   const sbName   = document.getElementById('sb-name');
   const sbAvatar = document.getElementById('sb-avatar');
