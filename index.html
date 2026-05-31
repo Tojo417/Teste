@@ -1194,17 +1194,22 @@ setInterval(function() {
   const red = !isPerm && h < 1;
   if (hmsEl) hmsEl.style.color = red ? '#ef4444' : '#22c55e';
   if (sbEl)  sbEl.style.color  = red ? '#ef4444' : '#22c55e';
-  // Expiration en cours de session
-  if (!isPerm && isTrialExpired() && currentUser && currentUser.role === 'guest') {
-    currentUser = null;
-    showPage('page-login');
-    const errEl = document.getElementById('login-err');
-    if (errEl) {
-      errEl.innerHTML = '🔒 Accès gratuit expiré — <a href="tel:+261034968714" style="color:#22c55e;font-weight:700;">034 96 871 47</a>';
-      errEl.classList.add('show');
+  // Expiration en cours de session — GUEST UNIQUEMENT
+  if (currentUser && currentUser.role === 'guest') {
+    const rec = getMyGuestRecord();
+    const perm = rec && rec.permanent;
+    if (!perm && isTrialExpired()) {
+      currentUser = null;
+      clearSession();
+      showPage('page-login');
+      const errEl = document.getElementById('login-err');
+      if (errEl) {
+        errEl.innerHTML = '🔒 Accès gratuit expiré — <a href="tel:+261034968714" style="color:#22c55e;font-weight:700;">034 96 871 47</a>';
+        errEl.classList.add('show');
+      }
+      const btnG = document.getElementById('btn-gratuit');
+      if (btnG) { btnG.style.borderColor='rgba(239,68,68,0.4)'; btnG.style.color='#ef4444'; btnG.innerHTML='🔒 Accès gratuit expiré'; btnG.disabled=true; }
     }
-    const btnG = document.getElementById('btn-gratuit');
-    if (btnG) { btnG.style.borderColor='rgba(239,68,68,0.4)'; btnG.style.color='#ef4444'; btnG.innerHTML='🔒 Accès gratuit expiré'; btnG.disabled=true; }
   }
 }, 1000);
 
@@ -1215,13 +1220,10 @@ window.addEventListener('load', function() {
   const savedSess = loadSession();
   if (savedSess) {
     if (savedSess.role === 'admin') {
-      // Vérifier que le compte admin existe encore
       const acc = getAdminAccount();
       if (acc.username === savedSess.username) {
         currentUser = savedSess;
-        renderUsers(); renderGuests();
         showAppPanel();
-        goto: null; // label trick — skip login display below
       }
     } else if (savedSess.role === 'user') {
       const users = getUsers();
